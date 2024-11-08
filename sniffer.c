@@ -6,6 +6,7 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
+#include <signal.h>
 
 #define TAB1 "\t"
 #define TAB2 "\t\t"
@@ -25,19 +26,45 @@ int UDPPackets = 0;
 * ChatGPT helped significantly in learning how to use LIBPCAP and writing the structure of this program. 
 */
 
+void PrintStats(int dummy);
+void packet_handler(u_char *user_data, const struct pcap_pkthdr *pkthdr, const u_char *packet);
 
-void PrintStats() {
+int main() {
+    signal(SIGINT, PrintStats);
+    char *device = pcap_lookupdev(NULL);
+    if (device == NULL) {
+        fprintf(stderr, "Could not find a default device\n");
+        return 1;
+    }
+
+    char error_buffer[PCAP_ERRBUF_SIZE];
+    pcap_t *handle = pcap_open_live(device, BUFSIZ, 1, 1000, error_buffer);
+    if (handle == NULL) {
+        fprintf(stderr, "Could not open device %s: %s\n", device, error_buffer);
+        return 2;
+    }
+
+    printf("Listening on device %s...\n", device);
+    pcap_loop(handle, 0, packet_handler, NULL);
+
+    // Close the session
+    pcap_close(handle);
+    return 0;
+}
+
+void PrintStats(int dummy) {
     char *device = pcap_lookupdev(NULL);
     if (device == NULL) {
         fprintf(stderr, "Could not find a default device\n");
         return;
     }
+    printf("\n");
     printf("************ STATS FOR %s ************\n", device);
     printf("Total Packets captured: %d\n", totalPackets);
     printf("Total TCP Packets captured: %d\n", TCPPackets);
     printf("Total UDP Packets captured: %d\n", UDPPackets);
     printf("Total None TCP/UDP packets captured: %d\n", totalPackets - (TCPPackets + UDPPackets));
-    
+    exit(0);
 }
 void packet_handler(u_char *user_data, const struct pcap_pkthdr *pkthdr, const u_char *packet) {
     // Ethernet header
@@ -75,26 +102,4 @@ void packet_handler(u_char *user_data, const struct pcap_pkthdr *pkthdr, const u
         printf("Found packet without IP header.\n");
     }
     printf("\n");
-}
-
-int main() {
-    char *device = pcap_lookupdev(NULL);
-    if (device == NULL) {
-        fprintf(stderr, "Could not find a default device\n");
-        return 1;
-    }
-
-    char error_buffer[PCAP_ERRBUF_SIZE];
-    pcap_t *handle = pcap_open_live(device, BUFSIZ, 1, 1000, error_buffer);
-    if (handle == NULL) {
-        fprintf(stderr, "Could not open device %s: %s\n", device, error_buffer);
-        return 2;
-    }
-
-    printf("Listening on device %s...\n", device);
-    pcap_loop(handle, 0, packet_handler, NULL);
-
-    // Close the session
-    pcap_close(handle);
-    return 0;
 }
