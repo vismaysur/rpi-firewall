@@ -1,0 +1,4 @@
+# Format: protocol ip_src port_src ip_dst port_dst action
+
+ANY * 0 * 4001 block
+ANY * 0 * 443 block

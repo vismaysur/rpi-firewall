@@ -1,12 +1,38 @@
-#include <pcap.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <arpa/inet.h>
-#include <netinet/ether.h>
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
-#include <netinet/udp.h>
-#include <signal.h>
+#ifdef __APPLE__
+    #include <pcap/pcap.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <sys/socket.h>
+    #include <net/if.h>
+    #include <netinet/in.h>
+    #include <net/ethernet.h>
+    #include <netinet/ip.h>
+    #include <netinet/tcp.h>
+    #include <netinet/udp.h>
+    #include <signal.h>
+
+    #define TCP_DEST(th)    ((th)->th_dport)
+    #define TCP_SOURCE(th)  ((th)->th_sport)
+    #define UDP_DEST(uh)    ((uh)->uh_dport)
+    #define UDP_SOURCE(uh)  ((uh)->uh_sport)
+#else
+    #include <pcap.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <arpa/inet.h>
+    #include <netinet/ether.h>
+    #include <netinet/ip.h>
+    #include <netinet/tcp.h>
+    #include <netinet/udp.h>
+    #include <signal.h>
+
+    #define TCP_DEST(th)    ((th)->dest)
+    #define TCP_SOURCE(th)  ((th)->source)
+    #define UDP_DEST(uh)    ((uh)->dest)
+    #define UDP_SOURCE(uh)  ((uh)->source)
+#endif
+
+#include "user_rules.h"
 
 #define TAB1 "\t"
 #define TAB2 "\t\t"
@@ -29,7 +55,16 @@ int UDPPackets = 0;
 void PrintStats(int dummy);
 void packet_handler(u_char *user_data, const struct pcap_pkthdr *pkthdr, const u_char *packet);
 
-int main() {
+int main(int argc, char *argv[]) {
+    if (argc == 1) {
+        printf("Note: no user_rules file specified!\n");
+    } else if (argc == 2) {
+        parse_rules_file(argv[1]);
+    } else  {
+        fprintf(stderr, "Usage: %s <rules_file>\n", argv[0]);
+        return 1;
+    }
+
     signal(SIGINT, PrintStats);
     char *device = pcap_lookupdev(NULL);
     if (device == NULL) {
@@ -66,40 +101,56 @@ void PrintStats(int dummy) {
     printf("Total None TCP/UDP packets captured: %d\n", totalPackets - (TCPPackets + UDPPackets));
     exit(0);
 }
-void packet_handler(u_char *user_data, const struct pcap_pkthdr *pkthdr, const u_char *packet) {
-    // Ethernet header
-    totalPackets++;
-    struct ether_header *eth_header = (struct ether_header *) packet;
-    printf("Ethernet Header\n");
-    printf("%sSource MAC: %s\n", TAB1, ether_ntoa((struct ether_addr *) eth_header->ether_shost));
-    printf("%sDestination MAC: %s\n", TAB1, ether_ntoa((struct ether_addr *) eth_header->ether_dhost));
-    printf("%sProtocol: %u\n", TAB1, ntohs(eth_header->ether_type));
 
-    // Check if the packet contains an IP header
+void packet_handler(u_char *user_data, const struct pcap_pkthdr *pkthdr, const u_char *packet) {
+    struct ether_header *eth_header = (struct ether_header *) packet;
+
     if (ntohs(eth_header->ether_type) == ETHERTYPE_IP) {
         struct ip *ip_header = (struct ip *)(packet + sizeof(struct ether_header));
-        printf("IP Header\n");
-        printf("%sSource IP: %s\n", TAB1, inet_ntoa(ip_header->ip_src));
-        printf("%sDestination IP: %s\n", TAB1, inet_ntoa(ip_header->ip_dst));
+        char src_ip[INET_ADDRSTRLEN], dst_ip[INET_ADDRSTRLEN];
+        
+        inet_ntop(AF_INET, &(ip_header->ip_src), src_ip, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &(ip_header->ip_dst), dst_ip, INET_ADDRSTRLEN);
 
-        // We only check for TCP or UDP
+        int protocol = 0;
+        uint16_t src_port = 0, dst_port = 0;
+
         if (ip_header->ip_p == IPPROTO_TCP) {
             struct tcphdr *tcp_header = (struct tcphdr *)(packet + sizeof(struct ether_header) + ip_header->ip_hl * 4);
-            printf("TCP Header\n");
-            printf("%sSource Port: %u\n", TAB1, ntohs(tcp_header->source));
-            printf("%sDestination Port: %u\n", TAB1, ntohs(tcp_header->dest));
-            TCPPackets++;
+            protocol = 1;
+            src_port = ntohs(TCP_SOURCE(tcp_header));
+            dst_port = ntohs(TCP_DEST(tcp_header));
         } else if (ip_header->ip_p == IPPROTO_UDP) {
             struct udphdr *udp_header = (struct udphdr *)(packet + sizeof(struct ether_header) + ip_header->ip_hl * 4);
-            printf("UDP Header\n");
-            printf("%sSource Port: %u\n", TAB1, ntohs(udp_header->source));
-            printf("%sDestination Port: %u\n", TAB1, ntohs(udp_header->dest));
-            UDPPackets++;
-        } else {
-            printf("Found non TCP/UDP packet with IP header.\n");
+            protocol = 2;
+            src_port = ntohs(UDP_SOURCE(udp_header));
+            dst_port = ntohs(UDP_DEST(udp_header));
         }
-    } else {
-        printf("Found packet without IP header.\n");
+
+        if (check_rules(src_ip, dst_ip, src_port, dst_port, protocol)) {
+            totalPackets++;
+            
+            printf("Ethernet Header\n");
+            printf("%sSource MAC: %s\n", TAB1, ether_ntoa((struct ether_addr *) eth_header->ether_shost));
+            printf("%sDestination MAC: %s\n", TAB1, ether_ntoa((struct ether_addr *) eth_header->ether_dhost));
+            printf("%sProtocol: %u\n", TAB1, ntohs(eth_header->ether_type));
+
+            printf("IP Header\n");
+            printf("%sSource IP: %s\n", TAB1, src_ip);
+            printf("%sDestination IP: %s\n", TAB1, dst_ip);
+
+            if (protocol == 1) {
+                printf("TCP Header\n");
+                printf("%sSource Port: %u\n", TAB1, src_port);
+                printf("%sDestination Port: %u\n", TAB1, dst_port);
+                TCPPackets++;
+            } else if (protocol == 2) {
+                printf("UDP Header\n");
+                printf("%sSource Port: %u\n", TAB1, src_port);
+                printf("%sDestination Port: %u\n", TAB1, dst_port);
+                UDPPackets++;
+            }
+            printf("\n");
+        }
     }
-    printf("\n");
 }

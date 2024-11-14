@@ -1,0 +1,7 @@
+{
+  "files.associations": {
+    "user_rules.h": "c",
+    "stdint.h": "c",
+    "stdio.h": "c"
+  }
+}
