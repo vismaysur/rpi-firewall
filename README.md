@@ -48,11 +48,6 @@ sudo ./bin/sniffer
 sudo ./bin/sniffer rules/custom.rules
 ```
 
-## Additional Resources
-
-- Project Structure Diagram: `docs/structure.png`
-- Sample Rules Dataset: `rules/examples/`
-
 ## Acknowledgments
 
 Based on libpcap and inspired by open-source network monitoring tools.
