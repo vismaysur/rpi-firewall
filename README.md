@@ -4,7 +4,7 @@ A real-time network packet analyzer with DoS detection capabilities and configur
 
 ## Team Contributions
 
-### Phillip
+### Philip
 
 - RPI positioning
 - Traffic sniffing code
